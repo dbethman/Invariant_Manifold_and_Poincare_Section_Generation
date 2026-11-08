@@ -13,14 +13,14 @@ This project utilizes the [ASSET](https://github.com/astrodynamics/asset) (Astro
 * **Poincaré Sections:** Computes continuous-trajectory plane crossings (e.g., at the Earth's X-coordinate) using linear interpolation for exact crossing states.
 * **3D Velocity Mapping:** Projects Poincaré crossings into 3D space $(Y, Z, V)$ to map speed characteristics at the crossing plane, complete with Geosynchronous Orbit (GEO) footprint references.
 
-## 📦 Dependencies
+## Dependencies
 
 This project requires Python 3.x and the following packages:
 * `numpy`
 * `matplotlib`
 * `asset_asrl` (ASSET)
 
-## 🛠️ Usage
+## Usage
 
 ### 1. Generate the Manifold Data
 Run the main solver to converge the orbit, compute the manifolds, and save the trajectory data to a Pickle file.
