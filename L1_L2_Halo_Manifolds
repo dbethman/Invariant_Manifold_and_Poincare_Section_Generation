@@ -1,0 +1,27 @@
+import pickle
+from Manifold_Functions import ManifoldSolver
+
+
+def main():
+    # Initialize the CR3BP environment
+    solver = ManifoldSolver()
+
+    
+
+    initial_guess =  [1.0394, 0.0, 0.1919, 0.0, -0.1381, 0.0, 0.0] 
+    tf_guess = 1.7434
+    
+    
+    output_filename = 'l2_halo_manifold.pkl'
+
+
+    data = solver.generate_manifolds(initial_guess, tf_guess, manifold_num = 200, step_size=1e-3, multiplier = 10, stable=True, unstable=False, pos=True, neg=True)
+
+    # Save the data
+    with open(output_filename, 'wb') as file:
+        pickle.dump(data, file)
+
+    print(f"Successfully saved {len(data)} orbits to {output_filename}.")
+
+if __name__ == '__main__':
+    main()
