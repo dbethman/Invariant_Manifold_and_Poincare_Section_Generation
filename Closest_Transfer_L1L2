@@ -1,0 +1,303 @@
+import pickle
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.spatial.distance import cdist
+
+def _first_far_side_crossing(x, y, x_moon, is_L2=False, crossing_num=1):
+    """
+    Returns (idx, f): the first segment idx -> idx+1 where y crosses zero at
+    an x beyond the Moon. 
+    """
+    y0, y1 = y[:-1], y[1:]
+    crossing = (y0 * y1 <= 0) & (y0 != y1)
+    idxs = np.where(crossing)[0]
+    
+    crossings_found = 0
+    
+    for idx in idxs:
+        f = -y[idx] / (y[idx + 1] - y[idx])
+        x_cross = x[idx] + f * (x[idx + 1] - x[idx])
+        
+        if x_cross > x_moon:
+            # If L2, ignore crossings that happen right at the L2 point (~1.17)
+            if is_L2 and x_cross > 1.16:
+                continue
+                
+            crossings_found += 1
+            if crossings_found == crossing_num:
+                return idx, f
+            
+    return None
+
+
+def _min_dist_to_moon(x, y, x_moon):
+    """Minimum distance from the Moon (x_moon, 0) to the polyline (x, y)"""
+    if len(x) == 1:
+        return np.hypot(x[0] - x_moon, y[0])
+
+    px, py = x[:-1], y[:-1]
+    dx, dy = x[1:] - px, y[1:] - py
+    seg_len2 = dx**2 + dy**2
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t = ((x_moon - px) * dx + (0.0 - py) * dy) / seg_len2
+    t = np.where(seg_len2 > 0, np.clip(t, 0.0, 1.0), 0.0)
+
+    cx, cy = px + t * dx, py + t * dy
+    return np.min(np.hypot(cx - x_moon, cy))
+
+
+def process_trajectory(traj, x_moon, r_moon):
+    """
+    Discards the trajectory if it hits the Moon. 
+    Otherwise, returns the full, uncut trajectory.
+    """
+    if len(traj) == 0:
+        return None
+
+    # Only delete the orbit if it gets too close to the Moon
+    if _min_dist_to_moon(traj[:, 0], traj[:, 1], x_moon) < r_moon:
+        return None
+
+    return traj
+
+
+def get_poincare_point(traj, x_moon, is_L2=False, crossing_num=1):
+    """
+    Interpolates the (x, speed) state at the designated far-side crossing.
+    """
+    if traj is None or len(traj) < 2:
+        return None
+
+    x, y = traj[:, 0], traj[:, 1]
+    vx, vy, vz = traj[:, 3], traj[:, 4], traj[:, 5]
+
+    hit = _first_far_side_crossing(x, y, x_moon, is_L2, crossing_num)
+    if hit is None:
+        return None
+
+    idx, f = hit
+    
+    x_sec = x[idx] + f * (x[idx + 1] - x[idx])
+    vx_sec = vx[idx] + f * (vx[idx + 1] - vx[idx])
+    vy_sec = vy[idx] + f * (vy[idx + 1] - vy[idx])
+    vz_sec = vz[idx] + f * (vz[idx + 1] - vz[idx])
+    
+    speed_sec = np.sqrt(vx_sec**2 + vy_sec**2 + vz_sec**2)
+    
+    return (x_sec, speed_sec)
+
+
+def plot_manifolds_2d_moon_focus(traj_L1, traj_L2, x_moon, r_moon):
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    orbit_L1 = np.array(traj_L1[0])
+    orbit_L2 = np.array(traj_L2[0])
+    ax.plot(orbit_L1[:, 0], orbit_L1[:, 1], color='black', linewidth=2.5, label='L1 Periodic Orbit')
+    ax.plot(orbit_L2[:, 0], orbit_L2[:, 1], color='black', linewidth=2.5, linestyle='--', label='L2 Periodic Orbit')
+
+    added_L1, added_L2 = False, False
+
+    for traj in traj_L1[1:]:
+        processed = process_trajectory(np.array(traj), x_moon, r_moon)
+        if processed is not None:
+            ax.plot(processed[:, 0], processed[:, 1], color='red', alpha=0.8, linewidth=0.3, label='L1 Unstable' if not added_L1 else "")
+            added_L1 = True
+
+    for traj in traj_L2[1:]:
+        processed = process_trajectory(np.array(traj), x_moon, r_moon)
+        if processed is not None:
+            ax.plot(processed[:, 0], processed[:, 1], color='blue', alpha=0.8, linewidth=0.3, label='L2 Stable' if not added_L2 else "")
+            added_L2 = True
+
+    ax.plot(x_moon, 0, 'ko', markersize=12, label='Moon')
+    
+    ax.set_xlabel('X (Non-Dimensional)')
+    ax.set_ylabel('Y (Non-Dimensional)')
+    ax.set_title('2D CR3BP Invariant Manifolds (Focused on Moon)')
+    ax.set_xlim([0.8, 1.2])
+    ax.set_ylim([-0.15, 0.15])
+    ax.set_aspect('equal', adjustable='box')
+    ax.legend(loc='upper right')
+
+
+def plot_manifolds_whole_system(traj_L1, traj_L2, mu, x_moon, r_moon):
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    orbit_L1 = np.array(traj_L1[0])
+    orbit_L2 = np.array(traj_L2[0])
+    ax.plot(orbit_L1[:, 0], orbit_L1[:, 1], color='black', linewidth=2.5, label='L1 Periodic Orbit')
+    ax.plot(orbit_L2[:, 0], orbit_L2[:, 1], color='black', linewidth=2.5, linestyle='--', label='L2 Periodic Orbit')
+
+    added_L1, added_L2 = False, False
+
+    for traj in traj_L1[1:]:
+        processed = process_trajectory(np.array(traj), x_moon, r_moon)
+        if processed is not None:
+            ax.plot(processed[:, 0], processed[:, 1], color='red', alpha=0.5, linewidth=0.3, label='L1 Unstable' if not added_L1 else "")
+            added_L1 = True
+
+    for traj in traj_L2[1:]:
+        processed = process_trajectory(np.array(traj), x_moon, r_moon)
+        if processed is not None:
+            ax.plot(processed[:, 0], processed[:, 1], color='blue', alpha=0.5, linewidth=0.3, label='L2 Stable' if not added_L2 else "")
+            added_L2 = True
+
+    ax.plot(-mu, 0, 'bo', markersize=16, label='Earth')
+    ax.plot(x_moon, 0, 'ko', markersize=8, label='Moon')
+    
+    ax.set_xlabel('X (Non-Dimensional)')
+    ax.set_ylabel('Y (Non-Dimensional)')
+    ax.set_title('2D CR3BP Invariant Manifolds (Earth-Moon System View)')
+    ax.set_aspect('equal', adjustable='datalim')
+    ax.legend(loc='upper right')
+
+
+def plot_poincare_section(traj_L1, traj_L2, x_moon, r_moon):
+    fig, ax = plt.subplots(figsize=(8, 8))
+    
+    unstable_pts = []
+    stable_pts = []
+    added_L1, added_L2 = False, False
+    
+    for traj in traj_L1[1:]:
+        processed = process_trajectory(np.array(traj), x_moon, r_moon)
+        if processed is not None:
+            pt = get_poincare_point(processed, x_moon, is_L2=False, crossing_num=2)
+            if pt is not None:
+                ax.scatter(pt[0], pt[1], color='red', s=10, label='L1 Unstable' if not added_L1 else "")
+                unstable_pts.append(pt)
+                added_L1 = True
+
+    for traj in traj_L2[1:]:
+        processed = process_trajectory(np.array(traj), x_moon, r_moon)
+        if processed is not None:
+            pt = get_poincare_point(processed, x_moon, is_L2=True, crossing_num=1)
+            if pt is not None:
+                ax.scatter(pt[0], pt[1], color='blue', s=10, label='L2 Stable' if not added_L2 else "")
+                stable_pts.append(pt)
+                added_L2 = True
+            
+    # Distance Calculation
+    unstable_arr = np.array(unstable_pts)
+    stable_arr = np.array(stable_pts)
+    
+    if len(unstable_arr) > 0 and len(stable_arr) > 0:
+        dists = cdist(unstable_arr, stable_arr)
+        min_idx = np.unravel_index(np.argmin(dists), dists.shape)
+        u_closest = unstable_arr[min_idx[0]]
+        s_closest = stable_arr[min_idx[1]]
+        
+        ax.plot([u_closest[0], s_closest[0]], [u_closest[1], s_closest[1]], 
+                color='lime', linestyle='-', linewidth=2, label='Closest Distance')
+        ax.scatter([u_closest[0], s_closest[0]], [u_closest[1], s_closest[1]], 
+                   color='lime', s=50, edgecolors='black', zorder=5)
+
+        delta_x_nd = abs(u_closest[0] - s_closest[0])
+        delta_v_nd = abs(u_closest[1] - s_closest[1])
+        
+        L_star = 384400.0  
+        V_star_ms = np.sqrt(403503.2415 / L_star) * 1000  
+        
+        delta_x_km = delta_x_nd * L_star
+        delta_v_ms = delta_v_nd * V_star_ms
+        
+        print("=== Closest Points on Poincaré Section ===")
+        print(f"Unstable Point: x = {u_closest[0]:.8f}, speed = {u_closest[1]:.8f}")
+        print(f"Stable Point:   x = {s_closest[0]:.8f}, speed = {s_closest[1]:.8f}")
+        print("\n--- Differences ---")
+        print(f"Δx     : {delta_x_nd:.6e} ND  |  {delta_x_km:.4f} km")
+        print(f"Δspeed : {delta_v_nd:.6e} ND  |  {delta_v_ms:.4f} m/s\n")
+    else:
+        print("Not enough points crossed the Poincaré section to calculate distance.")
+
+    ax.set_xlabel('X at Section (Non-Dimensional)')
+    ax.set_ylabel('Speed at Section (Non-Dimensional)')
+    ax.set_title('Poincaré Section on Far Side of Moon (y=0)')
+    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.legend(loc='best')
+
+
+
+def plot_closest_transfer(traj_L1, traj_L2, x_moon, r_moon):
+    """
+    Finds the single L1 and L2 orbits that are closest on the Poincaré section 
+    and plots only their trajectories in 2D space.
+    """
+    l1_pts, l1_indices = [], []
+    for i, traj in enumerate(traj_L1[1:]):
+        processed = process_trajectory(np.array(traj), x_moon, r_moon)
+        if processed is not None:
+            pt = get_poincare_point(processed, x_moon, is_L2=False, crossing_num=2)
+            if pt is not None:
+                l1_pts.append(pt)
+                l1_indices.append(i + 1)  # +1 because we skipped the periodic orbit at index 0
+
+    l2_pts, l2_indices = [], []
+    for i, traj in enumerate(traj_L2[1:]):
+        processed = process_trajectory(np.array(traj), x_moon, r_moon)
+        if processed is not None:
+            pt = get_poincare_point(processed, x_moon, is_L2=True, crossing_num=1)
+            if pt is not None:
+                l2_pts.append(pt)
+                l2_indices.append(i + 1)
+
+    if not l1_pts or not l2_pts:
+        print("Not enough points to calculate the closest transfer.")
+        return
+
+    # Find the indices of the closest pair
+    dists = cdist(np.array(l1_pts), np.array(l2_pts))
+    min_idx = np.unravel_index(np.argmin(dists), dists.shape)
+    
+    best_l1_idx = l1_indices[min_idx[0]]
+    best_l2_idx = l2_indices[min_idx[1]]
+
+    # --- Plotting ---
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    orbit_L1 = np.array(traj_L1[0])
+    orbit_L2 = np.array(traj_L2[0])
+    ax.plot(orbit_L1[:, 0], orbit_L1[:, 1], color='black', linewidth=2.5, label='L1 Periodic Orbit')
+    ax.plot(orbit_L2[:, 0], orbit_L2[:, 1], color='black', linewidth=2.5, linestyle='--', label='L2 Periodic Orbit')
+
+    # Plot only the two closest trajectories
+    best_l1_traj = np.array(traj_L1[best_l1_idx])
+    best_l2_traj = np.array(traj_L2[best_l2_idx])
+    
+    ax.plot(best_l1_traj[:, 0], best_l1_traj[:, 1], color='red', linewidth=1.5, label='Best L1 Unstable Manifold')
+    ax.plot(best_l2_traj[:, 0], best_l2_traj[:, 1], color='blue', linewidth=1.5, label='Best L2 Stable Manifold')
+
+    ax.plot(x_moon, 0, 'ko', markersize=12, label='Moon')
+    
+    ax.set_xlabel('X (Non-Dimensional)')
+    ax.set_ylabel('Y (Non-Dimensional)')
+    ax.set_title('Closest L1-L2 Transfer Trajectory')
+    ax.set_xlim([0.8, 1.2])
+    ax.set_ylim([-0.15, 0.15])
+    ax.set_aspect('equal', adjustable='box')
+    ax.legend(loc='upper right')
+    ax.grid(True, linestyle='--', alpha=0.6)
+
+if __name__ == '__main__':
+    file1 = 'l1_unstable_manifold.pkl'
+    file2 = 'l2_stable_manifold.pkl'
+    
+    mu = 0.0121505856
+    x_moon = 1.0 - mu
+    r_moon = 1700 / 384400.0  
+    
+    with open(file1, 'rb') as f1:
+        traj_L1 = pickle.load(f1)
+        
+    with open(file2, 'rb') as f2:
+        traj_L2 = pickle.load(f2)
+        
+    plot_manifolds_2d_moon_focus(traj_L1, traj_L2, x_moon, r_moon)
+    plot_manifolds_whole_system(traj_L1, traj_L2, mu, x_moon, r_moon)
+    plot_poincare_section(traj_L1, traj_L2, x_moon, r_moon)
+    
+    # Add the new function call here
+    plot_closest_transfer(traj_L1, traj_L2, x_moon, r_moon)
+    
+    plt.show()

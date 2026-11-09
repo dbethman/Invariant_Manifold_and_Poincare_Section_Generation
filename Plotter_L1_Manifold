@@ -234,7 +234,7 @@ def plot_poincare_section(trajectories, x_moon, r_moon):
     ax.legend(loc='best')
 
 if __name__ == '__main__':
-    filename = 'l1_manifold.pkl'
+    filename = 'l1_unstable_manifold.pkl'
     mu = 0.0121505856
     x_moon = 1.0 - mu
     r_moon = 1700 / 384400.0  # Approx physical radius of the Moon
@@ -242,6 +242,7 @@ if __name__ == '__main__':
     # Load data once
     with open(filename, 'rb') as file:
         trajectories = pickle.load(file)
+        
         
     # Generate all three plots
     plot_manifolds_2d_moon_focus(trajectories, x_moon, r_moon)
